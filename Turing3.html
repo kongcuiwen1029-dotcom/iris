@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turing Universe | 沉浸式空间 V2</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020204; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; }
+        
+        /* UI 层 */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+            padding: 40px; box-sizing: border-box;
+            color: rgba(255, 255, 255, 0.8);
+            z-index: 10;
+        }
+
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.15); padding-bottom: 20px;
+        }
+
+        h1 { margin: 0; font-size: 1.4rem; letter-spacing: 6px; text-transform: uppercase; text-shadow: 0 0 10px rgba(76, 201, 240, 0.3); }
+        .hint { font-size: 0.75rem; letter-spacing: 2px; opacity: 0.7; }
+
+        /* 卡片样式升级：毛玻璃质感 */
+        #movie-card {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.95);
+            width: 420px;
+            background: rgba(15, 15, 20, 0.65); /* 降低不透明度 */
+            backdrop-filter: blur(16px);        /* 增强毛玻璃模糊 */
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 30px 60px rgba(0,0,0,0.6);
+            padding: 50px;
+            opacity: 0;
+            pointer-events: auto;
+            transition: all 0.6s cubic-bezier(0.23, 1, 0.32, 1); /* 更平滑的动画曲线 */
+            display: none;
+            text-align: center;
+            z-index: 20;
+            border-radius: 4px;
+        }
+
+        #movie-card.active {
+            display: block; opacity: 1; transform: translate(-50%, -50%) scale(1);
+        }
+
+        #movie-card h2 { color: #fff; margin-top: 0; letter-spacing: 3px; font-weight: 400; font-size: 1.8rem; }
+        #movie-card p { color: #b0b0b0; line-height: 1.8; font-size: 0.95rem; margin: 20px 0; }
+        
+        .close-btn {
+            margin-top: 30px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #fff; padding: 12px 30px;
+            cursor: pointer; transition: all 0.3s;
+            text-transform: uppercase; letter-spacing: 2px; font-size: 0.8rem;
+        }
+        
+        .close-btn:hover { background: #fff; color: #000; box-shadow: 0 0 15px rgba(255,255,255,0.5); }
+
+        #loader {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: white; font-size: 0.8rem; letter-spacing: 4px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <header>
+            <h1>Turing Universe</h1>
+            <span class="hint">INTERACTIVE DATA SPACE</span>
+        </header>
+        <div style="font-size: 0.7rem; opacity: 0.4; display: flex; justify-content: space-between;">
+            <span>SYS: ONLINE</span>
+            <span>VER: 2.5.0</span>
+        </div>
+    </div>
+
+    <div id="movie-card">
+        <h2 id="m-title">Title</h2>
+        <p style="font-style: italic; color: #4cc9f0; font-size: 0.8rem; letter-spacing: 2px;" id="m-year">2024</p>
+        <div style="width: 50px; height: 1px; background: rgba(255,255,255,0.3); margin: 20px auto;"></div>
+        <p id="m-desc">Description</p>
+        <button class="close-btn" onclick="closeCard()">Return</button>
+    </div>
+
+    <div id="loader">INITIALIZING NEURAL NETWORK...</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.7.1/gsap.min.js"></script>
+
+    <script>
+        // --- 核心改动 1：生成圆形渐变纹理 ---
+        // 这是一个不依赖外部图片，直接在内存里画一个发光圆点的函数
+        function getTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            
+            // 绘制径向渐变 (中间白，边缘透明)
+            // 参数：x0, y0, r0, x1, y1, r1
+            const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');       // 核心亮白
+            gradient.addColorStop(0.2, 'rgba(240,240,255,0.6)');   // 稍微带点光晕
+            gradient.addColorStop(0.4, 'rgba(240,240,255,0.2)');   // 边缘淡出
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');             // 完全透明
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 32, 32);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        const movies = [
+            { id: 1, title: "图灵智考", year: "EXAM SYSTEM", desc: "为学生老师提供考试监考阅卷等服务。全流程数字化管理，智能防作弊分析。", pos: {x: -15, y: 5, z: -10}, color: 0x4cc9f0 },
+            { id: 2, title: "图灵会议", year: "MEETING HUB", desc: "小程序快速预约会议室，资源可视化看板，智能冲突检测与通知。", pos: {x: 15, y: -5, z: -20}, color: 0xf72585 },
+            { id: 3, title: "论文检测", year: "PAPER CHECK", desc: "您的论文一键检测专家。格式纠错、摘要自动优化、AI内容合规性审查。", pos: {x: 0, y: 12, z: -30}, color: 0xd4af37 },
+            { id: 4, title: "图灵智聘", year: "AI RECRUIT", desc: "AI智能招聘系统。多维人才画像，自动化简历筛选，人岗匹配算法。", pos: {x: -12, y: -10, z: 5}, color: 0x7209b7 },
+            { id: 5, title: "生物云鉴", year: "BIO IDENTIFY", desc: "精准野生动植物鉴定云服务。亿级样本库对比，科研级图像识别引擎。", pos: {x: 10, y: 8, z: 10}, color: 0x4361ee }
+        ];
+
+        // --- 1. 场景初始化 ---
+        const scene = new THREE.Scene();
+        // 雾效调得更深邃一点，带一点点蓝调，配合深空背景
+        scene.fog = new THREE.FogExp2(0x020204, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 45);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 性能优化
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // --- 2. 升级版粒子系统 (多色圆形) ---
+        const particlesCount = 2000;
+        const particleGeo = new THREE.BufferGeometry();
+        const posArray = new Float32Array(particlesCount * 3);
+        const colorArray = new Float32Array(particlesCount * 3); // 新增：粒子颜色数据
+        
+        // 预定义几种颜色来混合 (冷色调为主)
+        const palette = [
+            new THREE.Color(0xffffff), // 白
+            new THREE.Color(0x4cc9f0), // 蓝 (图灵蓝)
+            new THREE.Color(0x7209b7)  // 紫
+        ];
+
+        for(let i = 0; i < particlesCount; i++) {
+            // 空间分布
+            posArray[i * 3] = (Math.random() - 0.5) * 160;     // x
+            posArray[i * 3 + 1] = (Math.random() - 0.5) * 160; // y
+            posArray[i * 3 + 2] = (Math.random() - 0.5) * 160; // z
+
+            // 随机分配颜色
+            const color = palette[Math.floor(Math.random() * palette.length)];
+            colorArray[i * 3] = color.r;
+            colorArray[i * 3 + 1] = color.g;
+            colorArray[i * 3 + 2] = color.b;
+        }
+
+        particleGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        particleGeo.setAttribute('color', new THREE.BufferAttribute(colorArray, 3)); // 注入颜色
+
+        // 关键材质设置
+        const particleMat = new THREE.PointsMaterial({
+            size: 0.6,          // 稍微调大一点，因为边缘是透明的
+            map: getTexture(),  // <--- 调用函数生成圆形纹理
+            transparent: true,
+            opacity: 0.8,
+            vertexColors: true, // 开启：让粒子可以使用上面设置的颜色数组
+            blending: THREE.AdditiveBlending, // 发光叠加模式
+            depthWrite: false   // 关键：解决透明纹理遮挡背景的问题
+        });
+
+        const particlesMesh = new THREE.Points(particleGeo, particleMat);
+        scene.add(particlesMesh);
+
+        // --- 3. 升级版节点 (双层结构) ---
+        const nodesGroup = new THREE.Group();
+        const interactableObjects = [];
+
+        movies.forEach(movie => {
+            const nodeContainer = new THREE.Group();
+            nodeContainer.position.set(movie.pos.x, movie.pos.y, movie.pos.z);
+
+            // 外层：线框球体 (保护罩)
+            const outerGeo = new THREE.IcosahedronGeometry(1.7, 1);
+            const outerMat = new THREE.MeshBasicMaterial({ 
+                color: movie.color, 
+                wireframe: true,
+                transparent: true,
+                opacity: 0.25
+            });
+            const outerSphere = new THREE.Mesh(outerGeo, outerMat);
+            
+            // 内层：实体核心 (能量球)
+            const innerGeo = new THREE.IcosahedronGeometry(1.0, 0); // 低多边形
+            const innerMat = new THREE.MeshBasicMaterial({
+                color: movie.color,
+                transparent: true,
+                opacity: 0.7
+            });
+            const innerSphere = new THREE.Mesh(innerGeo, innerMat);
+
+            // 将数据绑定在外层球上用于点击检测
+            outerSphere.userData = movie; 
+            
+            // 组合
+            nodeContainer.add(outerSphere);
+            nodeContainer.add(innerSphere);
+            
+            // 添加点光源
+            const light = new THREE.PointLight(movie.color, 1.2, 25);
+            nodeContainer.add(light);
+
+            nodesGroup.add(nodeContainer);
+            interactableObjects.push(outerSphere); // 射线只检测外层大球
+        });
+
+        scene.add(nodesGroup);
+
+        // --- 4. 交互逻辑 ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let isCardOpen = false;
+        let mouseX = 0, mouseY = 0;
+        
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            mouseX = (event.clientX - window.innerWidth / 2) * 0.001;
+            mouseY = (event.clientY - window.innerHeight / 2) * 0.001;
+            
+            // 鼠标悬停变手型
+            if(!isCardOpen) {
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(interactableObjects);
+                document.body.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
+            } else {
+                document.body.style.cursor = 'default';
+            }
+        });
+
+        window.addEventListener('click', () => {
+            if(isCardOpen) return;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactableObjects);
+            if (intersects.length > 0) {
+                // 点击的是外层球，父级才是容器Group
+                const container = intersects[0].object.parent;
+                const data = intersects[0].object.userData;
+                focusOnNode(container, data);
+            }
+        });
+
+        function focusOnNode(containerObject, data) {
+            isCardOpen = true;
+            
+            // 获取目标的世界坐标
+            const targetPos = new THREE.Vector3();
+            containerObject.getWorldPosition(targetPos);
+            
+            // 相机飞入
+            gsap.to(camera.position, {
+                x: targetPos.x,
+                y: targetPos.y,
+                z: targetPos.z + 8, // 稍微拉近一点距离
+                duration: 1.5,
+                ease: "power3.inOut",
+                onUpdate: () => camera.lookAt(targetPos),
+                onComplete: () => showCard(data)
+            });
+        }
+
+        function showCard(data) {
+            document.getElementById('m-title').innerText = data.title;
+            document.getElementById('m-year').innerText = data.year;
+            document.getElementById('m-desc').innerText = data.desc;
+            const card = document.getElementById('movie-card');
+            card.classList.add('active');
+        }
+
+        window.closeCard = function() {
+            document.getElementById('movie-card').classList.remove('active');
+            
+            // 相机退出
+            gsap.to(camera.position, {
+                x: 0, y: 0, z: 45,
+                duration: 2,
+                ease: "power3.inOut",
+                onComplete: () => { isCardOpen = false; }
+            });
+            // 旋转复位
+            gsap.to(camera.rotation, { x: 0, y: 0, z: 0, duration: 2 });
+        };
+
+        // --- 5. 动画循环 ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            // 粒子整体缓慢旋转
+            particlesMesh.rotation.y = time * 0.03;
+
+            // 节点复杂自转
+            nodesGroup.children.forEach((node, i) => {
+                const outer = node.children[0];
+                const inner = node.children[1];
+                
+                // 外层反方向慢转
+                outer.rotation.x = -time * 0.1;
+                outer.rotation.y = -time * 0.15;
+                
+                // 内层正方向快转
+                inner.rotation.x = time * 0.2;
+                inner.rotation.y = time * 0.25;
+                
+                // 呼吸悬浮
+                node.position.y += Math.sin(time * 0.8 + i) * 0.005;
+            });
+
+            // 鼠标视差 (仅在未打开卡片时)
+            if (!isCardOpen) {
+                camera.position.x += (mouseX * 40 - camera.position.x) * 0.05;
+                camera.position.y += (-mouseY * 40 - camera.position.y) * 0.05;
+                camera.lookAt(0, 0, 0);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        setTimeout(() => document.getElementById('loader').style.display = 'none', 800);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
